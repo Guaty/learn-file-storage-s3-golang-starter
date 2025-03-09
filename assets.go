@@ -18,10 +18,14 @@ func (cfg apiConfig) ensureAssetsDir() error {
 
 func getAssetPath(mediaType string) string {
 	key := make([]byte, 32)
-	rand.Read(key)
+	rand.Read(key) // This never returns an error other than nil, according to docs.
 	fileName := base64.RawURLEncoding.EncodeToString(key)
 	ext := mediaTypeToExt(mediaType)
 	return fmt.Sprintf("%s%s", fileName, ext)
+}
+
+func (cfg apiConfig) getObjectURL(key string) string {
+	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, key)
 }
 
 func (cfg apiConfig) getAssetDiskPath(assetPath string) string {
