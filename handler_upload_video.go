@@ -1,10 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -85,7 +91,23 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	directory := ""
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Can't get video aspect ratio", err)
+		return
+	}
+	switch aspectRatio {
+	case "16:9":
+		directory = "landscape"
+	case "9:16":
+		directory = "portrait"
+	default:
+		directory = "other"
+	}
+
 	key := getAssetPath(mediaType)
+	key = filepath.Join(directory, key)
 	if _, err := cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &key,
@@ -105,4 +127,42 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func getVideoAspectRatio(filepath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filepath)
+	var b bytes.Buffer
+	cmd.Stdout = &b
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+
+	var output struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	if err := json.Unmarshal(b.Bytes(), &output); err != nil {
+		return "", err
+	}
+
+	if len(output.Streams) == 0 {
+		return "", fmt.Errorf("no stream data found")
+	}
+
+	width := output.Streams[0].Width
+	height := output.Streams[0].Height
+	ratio := float64(width) / float64(height)
+
+	const tolerance = 0.1
+
+	if math.Abs(ratio-16.0/9.0) < tolerance {
+		return "16:9", nil
+	} else if math.Abs(ratio-9.0/16.0) < tolerance {
+		return "9:16", nil
+	}
+
+	return "other", nil
 }
